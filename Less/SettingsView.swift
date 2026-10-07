@@ -53,12 +53,12 @@ private struct ReelsSettingsSection: View {
     var body: some View {
         Section {
             Toggle("Hide and block Reels", isOn: $blockReels)
-            Toggle("Leave after swiping a DM reel", isOn: $exitReelOnScroll)
+            Toggle("Return to chat after swiping a DM reel", isOn: $exitReelOnScroll)
                 .disabled(!blockReels)
         } header: {
             Text("Focus")
         } footer: {
-            Text("A reel opened directly from a conversation remains available. Trying to advance to another reel returns you Home.")
+            Text("A reel opened directly from a conversation remains available. Trying to advance to another reel returns you to the conversation.")
         }
     }
 }

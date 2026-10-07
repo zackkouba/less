@@ -2,7 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @State private var browser = InstagramBrowser()
-    @State private var showsSettings = false
+    @State private var navigation = AppNavigation.shared
     @AppStorage("blockReels") private var blockReels = true
     @AppStorage("exitReelOnScroll") private var exitReelOnScroll = true
     @AppStorage("appearance") private var appearance = AppAppearance.system.rawValue
@@ -13,22 +13,8 @@ struct ContentView: View {
                 .ignoresSafeArea()
 
             InstagramWebView(browser: browser)
-
-            VStack {
-                Spacer()
-                Button("Less Settings", systemImage: "gearshape.fill") {
-                    showsSettings = true
-                }
-                .labelStyle(.iconOnly)
-                .font(.system(size: 23, weight: .regular))
-                .foregroundStyle(.primary)
-                .frame(width: 48, height: 48)
-                .contentShape(Rectangle())
-                .padding(.bottom, 4)
-                .accessibilityHint("Opens settings for Less")
-            }
         }
-        .sheet(isPresented: $showsSettings) {
+        .sheet(isPresented: $navigation.showsSettings) {
             SettingsView(
                 browser: browser,
                 blockReels: $blockReels,

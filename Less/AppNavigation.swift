@@ -1,4 +1,15 @@
+import Observation
 import SwiftUI
+
+@MainActor
+@Observable
+final class AppNavigation {
+    static let shared = AppNavigation()
+
+    var showsSettings = false
+
+    private init() {}
+}
 
 enum AppAppearance: String, CaseIterable, Identifiable {
     case system

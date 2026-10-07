@@ -23,9 +23,12 @@ final class InstagramBrowser: NSObject {
     let webView: WKWebView
     private(set) var statusMessage = ""
     private(set) var pageBackgroundColor = UIColor.systemBackground
+    private var hasReportedPageBackgroundColor = false
     private var blockReels = true
     private var exitReelOnScroll = true
     private var authorizedReelPath: String?
+    private var reelReturnPath: String?
+    private var isDiagnosingDMContentTransition = false
 
     override init() {
         let configuration = WKWebViewConfiguration()
@@ -71,6 +74,7 @@ final class InstagramBrowser: NSObject {
     }
 
     func updateBackground(for colorScheme: ColorScheme) {
+        guard !hasReportedPageBackgroundColor else { return }
         let fallback = colorScheme == .dark
             ? UIColor(red: 18 / 255, green: 18 / 255, blue: 18 / 255, alpha: 1)
             : UIColor.white
@@ -143,9 +147,30 @@ final class InstagramBrowser: NSObject {
         load(path: "/")
     }
 
+    private func returnToConversation() {
+        authorizedReelPath = nil
+        statusMessage = "Returned to the conversation after leaving the shared reel"
+
+        if let reelReturnPath {
+            load(path: reelReturnPath)
+        } else if webView.url?.path.lowercased().hasPrefix("/direct/") == true {
+            webView.reload()
+        } else if webView.canGoBack {
+            webView.goBack()
+        } else {
+            load(path: "/")
+        }
+        reelReturnPath = nil
+    }
+
+    private func compactLogValue(_ value: String) -> String {
+        guard value.count > 50 else { return value }
+        return "\(value.prefix(50))…"
+    }
+
     private func isReelsFeed(_ url: URL?) -> Bool {
         guard let path = url?.path.lowercased() else { return false }
-        return path == "/reels" || path.hasPrefix("/reels/")
+        return path == "/reels" || path == "/reels/"
     }
 
     private func isReel(_ url: URL?) -> Bool {
@@ -200,15 +225,23 @@ extension InstagramBrowser: WKNavigationDelegate {
 
         if blockReels, isReelsFeed(url) {
             decisionHandler(.cancel)
-            returnHome(reason: "Reels feed blocked")
+            if authorizedReelPath == nil {
+                returnHome(reason: "Reels feed blocked")
+            } else {
+                returnToConversation()
+            }
             return
         }
 
         if blockReels, isReel(url) {
             let requestedPath = normalizedReelPath(url.path)
+            if isDiagnosingDMContentTransition {
+                decisionHandler(.allow)
+                return
+            }
             guard requestedPath == authorizedReelPath else {
                 decisionHandler(.cancel)
-                returnHome(reason: "Only reels opened from DMs are allowed")
+                returnToConversation()
                 return
             }
         }
@@ -234,21 +267,67 @@ extension InstagramBrowser: WKScriptMessageHandler {
               let type = payload["type"] as? String else { return }
 
         switch type {
+        case "dmVideoSessionStarted":
+            isDiagnosingDMContentTransition = true
+            if let url = webView.url,
+               url.path.lowercased().hasPrefix("/direct/") {
+                reelReturnPath = url.path + (url.query.map { "?\($0)" } ?? "")
+            }
+            if let value = payload["value"] as? String {
+                print("[Less] Started DM video session from visible video: \(compactLogValue(value))")
+            }
+        case "dmVideoObserved":
+            if let value = payload["value"] as? String {
+                print("[Less] Tracking first active DM video: \(compactLogValue(value))")
+            }
+        case "dmVideoTransition":
+            let from = payload["from"] as? String ?? "unknown"
+            let to = payload["to"] as? String ?? "unknown"
+            print("[Less] Detected active video transition after DM: \(compactLogValue(from)) -> \(compactLogValue(to))")
+            if isDiagnosingDMContentTransition {
+                isDiagnosingDMContentTransition = false
+                returnToConversation()
+            }
+        case "dmVideoSessionEnded":
+            isDiagnosingDMContentTransition = false
+            reelReturnPath = nil
+        case "dmContentTapped":
+            isDiagnosingDMContentTransition = true
+            if let returnPath = payload["returnPath"] as? String,
+               returnPath.lowercased().hasPrefix("/direct/") {
+                reelReturnPath = returnPath
+            }
+        case "dmContentTransition":
+            let from = payload["from"] as? String ?? "unknown"
+            let to = payload["to"] as? String ?? "unknown"
+            print("[Less] Detected content transition after DM: \(from) -> \(to)")
+        case "dmContentSessionEnded":
+            isDiagnosingDMContentTransition = false
+            reelReturnPath = nil
         case "dmReelTapped":
             if let path = payload["path"] as? String {
                 authorizedReelPath = normalizedReelPath(path)
             }
+            if let returnPath = payload["returnPath"] as? String,
+               returnPath.lowercased().hasPrefix("/direct/") {
+                reelReturnPath = returnPath
+            }
         case "blockedReel":
             if blockReels {
-                returnHome(reason: "Only reels opened from DMs are allowed")
+                if authorizedReelPath == nil {
+                    returnHome(reason: "Only reels opened from DMs are allowed")
+                } else {
+                    returnToConversation()
+                }
             }
         case "reelAdvanceAttempt":
             if blockReels, exitReelOnScroll {
-                returnHome(reason: "Returned Home after leaving the shared reel")
+                returnToConversation()
             }
         case "pageBackgroundColor":
             if let value = payload["value"] as? String,
                let color = color(fromCSS: value) {
+                hasReportedPageBackgroundColor = true
                 applyBackgroundColor(color)
             }
         default:
