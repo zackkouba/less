@@ -4,13 +4,17 @@ import UIKit
 import WebKit
 
 struct InstagramWebView: UIViewRepresentable {
+    @Environment(\.colorScheme) private var colorScheme
     let browser: InstagramBrowser
 
     func makeUIView(context: Context) -> WKWebView {
-        browser.webView
+        browser.updateBackground(for: colorScheme)
+        return browser.webView
     }
 
-    func updateUIView(_ webView: WKWebView, context: Context) {}
+    func updateUIView(_ webView: WKWebView, context: Context) {
+        browser.updateBackground(for: colorScheme)
+    }
 }
 
 @MainActor
@@ -18,8 +22,7 @@ struct InstagramWebView: UIViewRepresentable {
 final class InstagramBrowser: NSObject {
     let webView: WKWebView
     private(set) var statusMessage = ""
-    private(set) var profilePath: String?
-
+    private(set) var pageBackgroundColor = UIColor.systemBackground
     private var blockReels = true
     private var exitReelOnScroll = true
     private var authorizedReelPath: String?
@@ -49,28 +52,7 @@ final class InstagramBrowser: NSObject {
         webView.clipsToBounds = true
         webView.scrollView.clipsToBounds = true
         webView.scrollView.contentInsetAdjustmentBehavior = .never
-        open(.home)
-    }
-
-    func open(_ tab: AppTab) {
-        authorizedReelPath = nil
-
-        switch tab {
-        case .home:
-            load(path: "/")
-        case .search:
-            load(path: "/explore/")
-        case .messages:
-            load(path: "/direct/inbox/")
-        case .profile:
-            if let profilePath {
-                load(path: profilePath)
-            } else {
-                webView.evaluateJavaScript(InstagramScripts.openProfile)
-            }
-        case .settings:
-            break
-        }
+        load(path: "/")
     }
 
     func updatePolicy(blockReels: Bool, exitReelOnScroll: Bool) {
@@ -88,6 +70,13 @@ final class InstagramBrowser: NSObject {
         webView.evaluateJavaScript("window.lessApp?.setAppearance('\(value)')")
     }
 
+    func updateBackground(for colorScheme: ColorScheme) {
+        let fallback = colorScheme == .dark
+            ? UIColor(red: 18 / 255, green: 18 / 255, blue: 18 / 255, alpha: 1)
+            : UIColor.white
+        applyBackgroundColor(fallback)
+    }
+
     func clearInstagramData() {
         statusMessage = "Clearing session…"
         let store = WKWebsiteDataStore.default()
@@ -101,7 +90,6 @@ final class InstagramBrowser: NSObject {
 
             store.removeData(ofTypes: dataTypes, for: metaRecords) { [weak self] in
                 guard let self else { return }
-                self.profilePath = nil
                 self.authorizedReelPath = nil
                 self.statusMessage = "Session cleared"
                 self.load(path: "/accounts/login/")
@@ -121,6 +109,32 @@ final class InstagramBrowser: NSObject {
     private func sendConfigurationToPage() {
         let script = "window.lessApp?.configure({blockReels: \(blockReels), exitOnScroll: \(exitReelOnScroll)})"
         webView.evaluateJavaScript(script)
+    }
+
+    private func applyBackgroundColor(_ color: UIColor) {
+        pageBackgroundColor = color
+        webView.backgroundColor = color
+        webView.scrollView.backgroundColor = color
+        webView.underPageBackgroundColor = color
+    }
+
+    private func color(fromCSS value: String) -> UIColor? {
+        let components = value
+            .replacingOccurrences(of: "rgba(", with: "")
+            .replacingOccurrences(of: "rgb(", with: "")
+            .replacingOccurrences(of: ")", with: "")
+            .split(separator: ",")
+            .compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
+
+        guard components.count >= 3 else { return nil }
+        if components.count == 4, components[3] == 0 { return nil }
+
+        return UIColor(
+            red: components[0] / 255,
+            green: components[1] / 255,
+            blue: components[2] / 255,
+            alpha: 1
+        )
     }
 
     private func returnHome(reason: String) {
@@ -224,10 +238,6 @@ extension InstagramBrowser: WKScriptMessageHandler {
             if let path = payload["path"] as? String {
                 authorizedReelPath = normalizedReelPath(path)
             }
-        case "profilePath":
-            if let path = payload["path"] as? String, path.hasPrefix("/") {
-                profilePath = path
-            }
         case "blockedReel":
             if blockReels {
                 returnHome(reason: "Only reels opened from DMs are allowed")
@@ -235,6 +245,11 @@ extension InstagramBrowser: WKScriptMessageHandler {
         case "reelAdvanceAttempt":
             if blockReels, exitReelOnScroll {
                 returnHome(reason: "Returned Home after leaving the shared reel")
+            }
+        case "pageBackgroundColor":
+            if let value = payload["value"] as? String,
+               let color = color(fromCSS: value) {
+                applyBackgroundColor(color)
             }
         default:
             break

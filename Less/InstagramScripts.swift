@@ -1,19 +1,8 @@
 import Foundation
 
 enum InstagramScripts {
-    static let version = "2026.10.07.1"
+    static let version = "2026.10.07.3"
     static let messageHandler = "lessPolicy"
-
-    static let openProfile = #"""
-    (() => {
-        const links = [...document.querySelectorAll('a[href]')];
-        const profile = links.find(link => {
-            const label = `${link.getAttribute('aria-label') || ''} ${link.textContent || ''}`.trim();
-            return /^profile$/i.test(label);
-        });
-        if (profile) profile.click();
-    })();
-    """#
 
     static let bootstrap = #"""
     (() => {
@@ -24,6 +13,7 @@ enum InstagramScripts {
         let authorizedReel = null;
         let touchStartY = null;
         let lastPath = location.pathname;
+        let lastBackgroundColor = null;
 
         const post = (type, details = {}) => handler?.postMessage({ type, ...details });
         const normalizeReel = path => {
@@ -33,6 +23,26 @@ enum InstagramScripts {
         const isDirect = path => /^\/direct(?:\/|$)/i.test(path);
         const isReelsFeed = path => /^\/reels(?:\/|$)/i.test(path);
 
+        const reportBackgroundColor = () => {
+            const transparent = color => !color || color === 'rgba(0, 0, 0, 0)';
+            let sampledElement = document.elementFromPoint(2, Math.round(innerHeight / 2));
+            let sampledColor = '';
+            while (sampledElement && transparent(sampledColor)) {
+                sampledColor = getComputedStyle(sampledElement).backgroundColor;
+                sampledElement = sampledElement.parentElement;
+            }
+
+            const bodyColor = document.body ? getComputedStyle(document.body).backgroundColor : '';
+            const rootColor = getComputedStyle(document.documentElement).backgroundColor;
+            const color = !transparent(sampledColor)
+                ? sampledColor
+                : (!transparent(bodyColor) ? bodyColor : rootColor);
+            if (color && color !== 'rgba(0, 0, 0, 0)' && color !== lastBackgroundColor) {
+                lastBackgroundColor = color;
+                post('pageBackgroundColor', { value: color });
+            }
+        };
+
         const installStyle = () => {
             let style = document.getElementById('less-policy-style');
             if (!style) {
@@ -40,23 +50,18 @@ enum InstagramScripts {
                 style.id = 'less-policy-style';
                 (document.head || document.documentElement).appendChild(style);
             }
-            const desiredCSS = `
-                [data-less-instagram-navigation="true"] {
-                    display: none !important;
-                }
-            ` + (configuration.blockReels ? `
+            const desiredCSS = configuration.blockReels ? `
                 a[href="/reels/"], a[href^="/reels/"],
                 a[href="/reels"], [data-less-reels-entry="true"] {
                     display: none !important;
                 }
-            ` : '');
+            ` : '';
             if (style.textContent !== desiredCSS) {
                 style.textContent = desiredCSS;
             }
         };
 
         const markSemanticReelsEntries = () => {
-            const navigationLinks = [];
             for (const link of document.querySelectorAll('a[href]')) {
                 const href = link.getAttribute('href') || '';
                 const label = `${link.getAttribute('aria-label') || ''} ${link.textContent || ''}`.trim();
@@ -65,36 +70,6 @@ enum InstagramScripts {
                     link.dataset.lessReelsEntry = 'true';
                 }
 
-                if (href === '/' || /^\/(explore|direct|reels)(?:\/|$)/i.test(href) || /^profile$/i.test(label)) {
-                    navigationLinks.push(link);
-                }
-
-                if (/^profile$/i.test(label) && /^\/[A-Za-z0-9._]+\/?$/.test(href)) {
-                    post('profilePath', { path: href });
-                }
-            }
-
-            for (const link of navigationLinks) {
-                let candidate = link.parentElement;
-                for (let depth = 0; candidate && depth < 16; depth += 1, candidate = candidate.parentElement) {
-                    const destinations = new Set();
-                    for (const item of candidate.querySelectorAll('a[href]')) {
-                        const href = item.getAttribute('href') || '';
-                        const label = `${item.getAttribute('aria-label') || ''} ${item.textContent || ''}`.trim();
-                        if (href === '/') destinations.add('home');
-                        else if (/^\/explore(?:\/|$)/i.test(href)) destinations.add('search');
-                        else if (/^\/direct(?:\/|$)/i.test(href)) destinations.add('direct');
-                        else if (/^\/reels(?:\/|$)/i.test(href)) destinations.add('reels');
-                        else if (/^profile$/i.test(label)) destinations.add('profile');
-                    }
-
-                    const bounds = candidate.getBoundingClientRect();
-                    const navigationShape = bounds.height < 180 || bounds.width < 140;
-                    if (destinations.size >= 3 && navigationShape) {
-                        candidate.dataset.lessInstagramNavigation = 'true';
-                        return;
-                    }
-                }
             }
         };
 
@@ -113,6 +88,7 @@ enum InstagramScripts {
             lastPath = path;
             installStyle();
             markSemanticReelsEntries();
+            reportBackgroundColor();
         };
 
         document.addEventListener('click', event => {
@@ -179,6 +155,7 @@ enum InstagramScripts {
             else {
                 installStyle();
                 markSemanticReelsEntries();
+                reportBackgroundColor();
             }
         }).observe(document.documentElement, { childList: true, subtree: true });
 

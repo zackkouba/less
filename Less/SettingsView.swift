@@ -1,6 +1,7 @@
 import SwiftUI
 
 struct SettingsView: View {
+    @Environment(\.dismiss) private var dismiss
     let browser: InstagramBrowser
     @Binding var blockReels: Bool
     @Binding var exitReelOnScroll: Bool
@@ -22,6 +23,13 @@ struct SettingsView: View {
                 AboutSettingsSection()
             }
             .navigationTitle("Less Settings")
+            .toolbar {
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Done") {
+                        dismiss()
+                    }
+                }
+            }
             .confirmationDialog(
                 "Clear Instagram session?",
                 isPresented: $showsClearConfirmation,
